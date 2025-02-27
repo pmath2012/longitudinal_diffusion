@@ -13,15 +13,33 @@ import torch.distributed as dist
 
 # Change this to reflect your cluster layout.
 # The GPU for a given rank is (rank % GPUS_PER_NODE).
-GPUS_PER_NODE = 8
+GPUS_PER_NODE = 4
 
 SETUP_RETRY_COUNT = 3
 
+def print_distributed_environment():
+    """
+    Print key environment variables related to distributed setup to confirm torchrun is working properly.
+    """
+    rank = os.environ.get('RANK', 'Not Set')
+    world_size = os.environ.get('WORLD_SIZE', 'Not Set')
+    local_rank = os.environ.get('LOCAL_RANK', 'Not Set')
+    master_addr = os.environ.get('MASTER_ADDR', 'Not Set')
+    master_port = os.environ.get('MASTER_PORT', 'Not Set')
+
+    print(f"Distributed Environment Variables:")
+    print(f"RANK: {rank}")
+    print(f"WORLD_SIZE: {world_size}")
+    print(f"LOCAL_RANK: {local_rank}")
+    print(f"MASTER_ADDR: {master_addr}")
+    print(f"MASTER_PORT: {master_port}")
 
 def setup_dist():
     """
     Setup a distributed process group.
     """
+
+
     if dist.is_initialized():
         return
 

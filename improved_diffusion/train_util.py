@@ -178,14 +178,15 @@ class TrainLoop:
             self.save()
 
     def run_step(self, batch, cond):
-        self.forward_backward(batch, cond)
+        drop_condition = th.rand(1).item() < 0.35 # 35% of the time drop parent conditioning
+        self.forward_backward(batch, cond, drop_condition)
         if self.use_fp16:
             self.optimize_fp16()
         else:
             self.optimize_normal()
         self.log_step()
 
-    def forward_backward(self, batch, cond):
+    def forward_backward(self, batch, cond, drop_condition=False):
         zero_grad(self.model_params)
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
@@ -195,13 +196,13 @@ class TrainLoop:
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
-
+            micro_cond['drop_condition'] = drop_condition
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
                 self.ddp_model,
                 micro,
                 t,
-                model_kwargs=micro_cond,
+                model_kwargs=micro_cond
             )
 
             if last_batch or not self.use_ddp:

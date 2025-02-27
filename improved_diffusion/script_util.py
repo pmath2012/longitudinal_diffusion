@@ -4,6 +4,8 @@ import inspect
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel
+from .conditional_unet import ConditionalUNet
+from .conditional_gaussian_diffusion import ConditionalGaussianDiffusion
 
 NUM_CLASSES = 1000
 
@@ -267,6 +269,154 @@ def create_gaussian_diffusion(
         rescale_timesteps=rescale_timesteps,
     )
 
+def create_conditional_model_and_diffusion(
+    image_size,
+    num_channels,
+    num_res_blocks,
+    num_heads,
+    num_heads_upsample,
+    attention_resolutions,
+    dropout,
+    diffusion_steps,
+    noise_schedule,
+    timestep_respacing,
+    use_kl,
+    predict_xstart,
+    rescale_timesteps,
+    use_checkpoint,
+    use_scale_shift_norm,
+    learn_sigma,
+    rescale_learned_sigmas=False,
+    class_cond=True,
+    sigma_small=None,
+    segmentation_model=None,  # New argument to accept the segmentation model
+):
+    """
+    Function to create ConditionalUNet model and ConditionalGaussianDiffusion instance.
+    """
+    model = create_conditional_model(
+        image_size=image_size,
+        num_channels=num_channels,
+        num_res_blocks=num_res_blocks,
+        num_heads=num_heads,
+        num_heads_upsample=num_heads_upsample,
+        attention_resolutions=attention_resolutions,
+        dropout=dropout,
+        use_checkpoint=use_checkpoint,
+        class_cond=class_cond,
+        use_scale_shift_norm=use_scale_shift_norm,
+        learn_sigma=learn_sigma
+    )
+
+    diffusion = create_conditional_gaussian_diffusion(
+        steps=diffusion_steps,
+        noise_schedule=noise_schedule,
+        use_kl=use_kl,
+        predict_xstart=predict_xstart,
+        rescale_timesteps=rescale_timesteps,
+        rescale_learned_sigmas=rescale_learned_sigmas,
+        timestep_respacing=timestep_respacing,
+        learn_sigma=learn_sigma,
+        sigma_small=sigma_small,
+        segmentation_model=segmentation_model  # Pass segmentation model to diffusion
+    )
+
+    return model, diffusion
+
+
+def create_conditional_model(
+    image_size,
+    num_channels,
+    num_res_blocks,
+    num_heads,
+    num_heads_upsample,
+    attention_resolutions,
+    dropout,
+    use_checkpoint,
+    use_scale_shift_norm,
+    class_cond,
+    learn_sigma=False
+):
+    """
+    Function to create a ConditionalUNet model.
+    """
+
+    if image_size == 256:
+        channel_mult = (1, 1, 2, 2, 4, 4)
+    elif image_size == 64:
+        channel_mult = (1, 2, 3, 4)
+    elif image_size == 32:
+        channel_mult = (1, 2, 2, 2)
+    else:
+        raise ValueError(f"Unsupported image size: {image_size}")
+
+    attention_ds = []
+    for res in attention_resolutions.split(","):
+        attention_ds.append(image_size // int(res))
+
+    # Creating the ConditionalUNet model
+    return ConditionalUNet(
+        in_channels=2,  # 1 channel for input image 
+        model_channels=num_channels,
+        out_channels=2,  # Output for the binary mask
+        num_res_blocks=num_res_blocks,
+        attention_resolutions=tuple(attention_ds),
+        channel_mult=channel_mult,
+        num_heads=num_heads,
+        num_heads_upsample=num_heads_upsample,
+        dropout=dropout,
+        use_checkpoint=use_checkpoint,
+        num_classes=(2 if class_cond else None),
+        use_scale_shift_norm=use_scale_shift_norm,
+    )
+
+
+def create_conditional_gaussian_diffusion(
+    *,
+    steps=1000,
+    noise_schedule="linear",
+    use_kl=False,
+    predict_xstart=False,
+    rescale_timesteps=False,
+    rescale_learned_sigmas=False,
+    timestep_respacing="",
+    segmentation_model=None,  # Pass the segmentation model,
+    learn_sigma=False,
+    sigma_small=False
+):
+    """
+    Function to create ConditionalGaussianDiffusion.
+    """
+    betas = gd.get_named_beta_schedule(noise_schedule, steps)
+    
+    if use_kl:
+        loss_type = gd.LossType.RESCALED_KL
+    elif rescale_learned_sigmas:
+        loss_type = gd.LossType.RESCALED_MSE
+    else:
+        loss_type = gd.LossType.MSE
+    if not timestep_respacing:
+        timestep_respacing = [steps]
+    # Calculate use_timesteps based on the provided timestep_respacing
+    use_timesteps = space_timesteps(steps, timestep_respacing)  
+
+
+    if not timestep_respacing:
+        timestep_respacing = [steps]
+
+    return ConditionalGaussianDiffusion(
+        betas=betas,
+        model_mean_type=(
+            gd.ModelMeanType.EPSILON if not predict_xstart else gd.ModelMeanType.START_X
+        ),
+        model_var_type=(
+            gd.ModelVarType.FIXED_LARGE if not rescale_learned_sigmas else gd.ModelVarType.LEARNED_RANGE
+        ),
+        loss_type=loss_type,
+        rescale_timesteps=rescale_timesteps,
+        use_timesteps=use_timesteps,
+        segmentation_model=segmentation_model,  # Pass the segmentation model here
+    )
 
 def add_dict_to_argparser(parser, default_dict):
     for k, v in default_dict.items():
